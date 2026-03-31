@@ -87,6 +87,18 @@ export class HomePage extends BasePage {
     await expect(this.accountServicesHeading()).not.toBeVisible();
   }
 
+  /**
+   * After attempting **Customer Login** with an empty password: still on login surface, not **Account Services**.
+   * ParaBank may keep `index.htm` or redirect to `login.htm`; the HTML `validity` API is not consistent across those.
+   */
+  async assertEmptyPasswordRejectedByFormValidation(timeout = 10_000): Promise<void> {
+    await expect(this.page).toHaveURL(/index\.htm|login\.htm/i);
+    await expect(this.accountServicesHeading()).not.toBeVisible({ timeout });
+    await expect(this.usernameInput()).toBeVisible({ timeout });
+    await expect(this.passwordInput()).toBeVisible({ timeout });
+    await expect(this.passwordInput()).toHaveValue('');
+  }
+
   // —— Private ——
 
   private static regExpEscape(s: string): string {

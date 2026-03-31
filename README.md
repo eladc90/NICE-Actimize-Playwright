@@ -35,51 +35,29 @@ npm run typecheck
 
 ## Execution
 
-All commands assume the repository root as the current directory.
+Run commands from the **repository root**.
 
-### Run the full suite
+### E2E journey
 
-Runs **all projects** defined in `playwright.config.ts` (API on Chromium, UI + E2E on Chromium, Firefox, and WebKit):
-
-```bash
-npx playwright test
-```
-
-### Run by area
-
-| Area | Command |
-|------|---------|
-| **E2E only** | `npx playwright test tests/e2e` |
-| **UI specs only** | `npx playwright test tests/UI_test_stages` |
-| **API specs only** | `npx playwright test tests/API_test_stages` |
-
-### Run by browser project
+Serial ParaBank flow in `tests/e2e` (register → login → API → curl → UI → transfer → balances → logout):
 
 ```bash
-npx playwright test --project=chromium
-npx playwright test --project=firefox
-npx playwright test --project=webkit
-npx playwright test --project=chromium-api
+npx playwright test tests/e2e
 ```
 
-Combine with a path, e.g. E2E on Chromium only:
+By default this follows `playwright.config.ts` **browser projects** (e.g. Chromium, Firefox, WebKit) that include `tests/e2e`.
 
-```bash
-npx playwright test tests/e2e --project=chromium
-```
-
-### Useful flags
+### Optional flags
 
 | Goal | Example |
 |------|---------|
-| Headed | `npx playwright test --headed` |
-| UI mode | `npx playwright test --ui` |
-| One worker (less load on demo host) | `npx playwright test --workers=1` |
-| HTML report (after a run) | `npx playwright show-report` |
+| Headed browser | `npx playwright test tests/e2e --headed` |
+| Playwright UI mode | `npx playwright test tests/e2e --ui` |
+| Chromium only (often stabler on the shared demo) | `npx playwright test tests/e2e --project=chromium` |
+| Fewer workers | `npx playwright test tests/e2e --workers=1` |
+| Open HTML report after a run | `npx playwright show-report` |
 
-### CI-oriented behavior
-
-- `CI=true`: stricter `forbidOnly`, **retries: 2**, **workers: 1** (see `playwright.config.ts`).
+With **`CI=true`**, Playwright applies stricter `forbidOnly`, **retries**, and **workers** as defined in `playwright.config.ts`.
 
 ---
 
@@ -120,7 +98,7 @@ npx playwright test tests/e2e --project=chromium
 
 | Choice | Benefit | Cost |
 |--------|---------|------|
-| Public ParaBank demo | No app to host; realistic stack | **Flaky** under load; outages and slow responses |
+| TypeScript (vs other languages) | Playwright is **first-class** for JS/TS: docs, codegen, types, and fixtures align with TS projects; page objects and API clients gain compile-time checks | Requires Node + TypeScript tooling (no Python/Java runner ergonomics in-repo) |
 | Nine separate E2E tests + serial mode | Clear reporting per step; IDE-friendly structure | **Cannot run step 2–9 alone** without failed/shared state; full journey only makes sense as a chain |
 | Multi-browser E2E (Chromium, Firefox, WebKit) | Broader coverage | **3×** load on demo; more intermittent failures |
 | UI registration for API users | Exercises true signup path | Slower than pure API seed; depends on UI stability |
@@ -141,19 +119,21 @@ npx playwright test tests/e2e --project=chromium
 
 ## How to scale it
 
-1. **Parallelism and sharding** — Use `npx playwright test --shard=1/3` (and CI matrix) to split by project or directory. Keep **registration-heavy** suites on **low worker count** or dedicated jobs.
+1. **Account lifecycle** — Tests **create real registrations** (E2E, API stages that hit Register). At scale you must **remove or reset those users** (private instance: DB reset such as `POST /cleanDB`, admin tooling, or ephemeral environments). The public demo has **no** per-user delete API; do not rely on shared-host cleanup.
 
-2. **Tag / grep** — Introduce tags (e.g. `@smoke`, `@e2e`) and run subsets: `npx playwright test --grep @smoke`.
+2. **Parallelism and sharding** — Use `npx playwright test --shard=1/3` (and CI matrix) to split by project or directory. Keep **registration-heavy** suites on **low worker count** or dedicated jobs.
 
-3. **Environment configuration** — Point `PARABANK_BASE_URL` / `PARABANK_API_BASE_URL` (after refactoring constants to read `process.env`) at a **dedicated test deployment** to remove shared-demo noise; add `.env` + `dotenv` as already hinted in `playwright.config.ts`.
+3. **Tag / grep** — Introduce tags (e.g. `@smoke`, `@e2e`) and run subsets: `npx playwright test --grep @smoke`.
 
-4. **Local app + `webServer`** — If you replace the demo with a containerized ParaBank (or proxy), enable `webServer` in config and use `baseURL` for faster, isolated runs.
+4. **Environment configuration** — Point `PARABANK_BASE_URL` / `PARABANK_API_BASE_URL` (after refactoring constants to read `process.env`) at a **dedicated test deployment** to remove shared-demo noise; add `.env` + `dotenv` as already hinted in `playwright.config.ts`.
 
-5. **Storage state** — For large UI suites, perform login once per worker file and reuse `storageState` to cut login time (tradeoff: more fixture complexity).
+5. **Local app + `webServer`** — If you replace the demo with a containerized ParaBank (or proxy), enable `webServer` in config and use `baseURL` for faster, isolated runs.
 
-6. **Separate E2E job** — Run `tests/e2e` nightly or on release branches only; keep PR checks on `UI_test_stages` + selective API tests for speed.
+6. **Storage state** — For large UI suites, perform login once per worker file and reuse `storageState` to cut login time (tradeoff: more fixture complexity).
 
-7. **Reporting and artifacts** — Enable traces/screenshots in CI for failures (`trace`, `screenshot`, `video` in config) to triage demo-side issues faster.
+7. **Separate E2E job** — Run `tests/e2e` nightly or on release branches only; keep PR checks on `UI_test_stages` + selective API tests for speed.
+
+8. **Reporting and artifacts** — Enable traces/screenshots in CI for failures (`trace`, `screenshot`, `video` in config) to triage demo-side issues faster.
 
 ---
 

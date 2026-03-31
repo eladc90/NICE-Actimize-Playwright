@@ -36,12 +36,16 @@ export class RegisterPage extends BasePage {
   /** Opens signup, fills `#customerForm`, submits, and waits for the success banner. */
   async registerNewCustomer(data: ParabankRegistrationData): Promise<void> {
     await this.openRegister();
+    await this.page.waitForLoadState('domcontentloaded');
     await this.fillAndRegister(data);
     await this.assertSignupSuccess();
   }
 
-  /** Fills all signup fields and clicks **Register**. */
+  /** Fills all signup fields and submits the form. */
   async fillAndRegister(data: ParabankRegistrationData): Promise<void> {
+    const form = this.formRoot();
+    await form.waitFor({ state: 'visible' });
+
     await this.firstNameInput().fill(data.firstName);
     await this.lastNameInput().fill(data.lastName);
     await this.streetInput().fill(data.street);
@@ -53,7 +57,15 @@ export class RegisterPage extends BasePage {
     await this.usernameInput().fill(data.username);
     await this.passwordInput().fill(data.password);
     await this.confirmPasswordInput().fill(data.confirmPassword);
-    await this.registerSubmit().click();
+
+    /**
+     * `input type="submit"` + shared demo latency: default `click()` may wait for navigation that Firefox
+     * does not settle promptly. `noWaitAfter` + {@link assertSignupSuccess} matches how we really assert done.
+     */
+    await this.registerSubmit().click({
+      noWaitAfter: true,
+      timeout: 45_000,
+    });
   }
 
   // —— Locators ——
@@ -102,8 +114,9 @@ export class RegisterPage extends BasePage {
     return this.formRoot().locator('input[name="repeatedPassword"]');
   }
 
+  /** Native submit control — `getByRole('button')` can be flaky vs `input[type="submit"]` in Firefox. */
   registerSubmit(): Locator {
-    return this.formRoot().getByRole('button', { name: 'Register' });
+    return this.formRoot().locator('input[type="submit"][value="Register"]');
   }
 
   // —— Assertions ——
