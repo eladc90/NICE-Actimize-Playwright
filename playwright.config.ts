@@ -47,22 +47,27 @@ export default defineConfig({
       retries: 1,
     },
 
+    /**
+     * Desktop browsers: all UI specs **and** `tests/e2e/**` (API specs stay in `chromium-api` only).
+     * E2E runs on Chromium, Firefox, and WebKit; the shared ParaBank demo may be flakier — use fewer workers or
+     * `npx playwright test --project=chromium` if needed.
+     */
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] },
-      testIgnore: '**/API_test_stages/**/*.spec.ts',
+      testIgnore: ['**/API_test_stages/**/*.spec.ts'],
     },
 
     {
       name: 'firefox',
       use: { ...devices['Desktop Firefox'] },
-      testIgnore: '**/API_test_stages/**/*.spec.ts',
+      testIgnore: ['**/API_test_stages/**/*.spec.ts'],
     },
 
     {
       name: 'webkit',
       use: { ...devices['Desktop Safari'] },
-      testIgnore: '**/API_test_stages/**/*.spec.ts',
+      testIgnore: ['**/API_test_stages/**/*.spec.ts'],
     },
 
     /* Test against mobile viewports. */

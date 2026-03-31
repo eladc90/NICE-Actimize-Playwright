@@ -2,8 +2,15 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { APIRequestContext, APIResponse } from '@playwright/test';
+import { expect, type APIRequestContext, type APIResponse } from '@playwright/test';
 import { PARABANK_API_BASE_URL } from '../const_data/api_base_url';
+import { ApiAssertions } from '../utilities/api_response_assertions';
+import {
+  expectedParabankCreateCheckingAccountResponse,
+  expectedParabankGetAccountResponse,
+  expectedParabankGetCustomerResponse,
+  expectedParabankLoginResponse,
+} from '../utilities/parabank_api_expectations';
 
 /** OpenAPI `newAccountType` value for CHECKING (`POST /createAccount` query param). */
 export const PARABANK_ACCOUNT_TYPE_CHECKING = 0;
@@ -14,23 +21,89 @@ export type ParabankCurlResult = {
   body: string;
 };
 
-/**
- * Covers every `paths` entry from ParaBank OpenAPI 3.0 (`openapi.yaml` linked in Swagger UI).
- * Each method mirrors the spec: path templates, query, and POST bodies.
- *
- * Callers consume {@link APIResponse} via `.text()` (XML/text) or `.json()` when the service returns JSON.
- *
- * @see https://parabank.parasoft.com/parabank/api-docs/index.html
- */
 export class ParabankApiClient {
   constructor(
     private readonly request: APIRequestContext,
     private readonly baseUrl: string = PARABANK_API_BASE_URL,
   ) {}
 
-  // —— Accounts / misc POST ——
+  loginRequest(username: string, password: string): Promise<APIResponse> {
+    return this.request.get(
+      this.buildUrl('/login/{username}/{password}', { username, password }),
+    );
+  }
 
-  /** POST `/billpay` — query: accountId, amount; body: Payee (JSON/XML per spec). */
+  async login(username: string, password: string): Promise<ParabankLoginResult> {
+    const response = await this.loginRequest(username, password);
+    const body = await response.text();
+    return {
+      status: response.status(),
+      ok: response.ok(),
+      body,
+      customerId: ParabankApiClient.parseCustomerIdFromCustomerXml(body),
+    };
+  }
+
+  getAccount(pathParams: { accountId: number }): Promise<APIResponse> {
+    return this.request.get(this.buildUrl('/accounts/{accountId}', pathParams));
+  }
+
+  getCustomer(pathParams: { customerId: number }): Promise<APIResponse> {
+    return this.request.get(this.buildUrl('/customers/{customerId}', pathParams));
+  }
+
+  getCustomerAccounts(pathParams: { customerId: number }): Promise<APIResponse> {
+    return this.request.get(this.buildUrl('/customers/{customerId}/accounts', pathParams));
+  }
+
+  getPosition(pathParams: { positionId: number }): Promise<APIResponse> {
+    return this.request.get(this.buildUrl('/positions/{positionId}', pathParams));
+  }
+
+  getPositionHistory(pathParams: { positionId: number; startDate: string; endDate: string }): Promise<APIResponse> {
+    return this.request.get(this.buildUrl('/positions/{positionId}/{startDate}/{endDate}', pathParams));
+  }
+
+  getCustomerPositions(pathParams: { customerId: number }): Promise<APIResponse> {
+    return this.request.get(this.buildUrl('/customers/{customerId}/positions', pathParams));
+  }
+
+  getTransaction(pathParams: { transactionId: number }): Promise<APIResponse> {
+    return this.request.get(this.buildUrl('/transactions/{transactionId}', pathParams));
+  }
+
+  getAccountTransactions(pathParams: { accountId: number }): Promise<APIResponse> {
+    return this.request.get(this.buildUrl('/accounts/{accountId}/transactions', pathParams));
+  }
+
+  getAccountTransactionsByAmount(pathParams: { accountId: number; amount: number }): Promise<APIResponse> {
+    return this.request.get(this.buildUrl('/accounts/{accountId}/transactions/amount/{amount}', pathParams));
+  }
+
+  getAccountTransactionsByMonthAndType(pathParams: {
+    accountId: number;
+    month: string;
+    type: string;
+  }): Promise<APIResponse> {
+    return this.request.get(
+      this.buildUrl('/accounts/{accountId}/transactions/month/{month}/type/{type}', pathParams),
+    );
+  }
+
+  getAccountTransactionsByDateRange(pathParams: {
+    accountId: number;
+    fromDate: string;
+    toDate: string;
+  }): Promise<APIResponse> {
+    return this.request.get(
+      this.buildUrl('/accounts/{accountId}/transactions/fromDate/{fromDate}/toDate/{toDate}', pathParams),
+    );
+  }
+
+  getAccountTransactionsOnDate(pathParams: { accountId: number; onDate: string }): Promise<APIResponse> {
+    return this.request.get(this.buildUrl('/accounts/{accountId}/transactions/onDate/{onDate}', pathParams));
+  }
+
   billPay(
     query: { accountId: number; amount: number },
     payee: ParabankPayee,
@@ -39,7 +112,6 @@ export class ParabankApiClient {
     return this.request.post(this.buildUrl('/billpay', {}, query), { data: payee, ...options });
   }
 
-  /** POST `/createAccount` — `newAccountType` is `integer` in the spec (not the CHECKING/SAVINGS string enum). */
   createAccount(query: {
     customerId: number;
     newAccountType: number;
@@ -50,7 +122,6 @@ export class ParabankApiClient {
 
   /**
    * POST `/createAccount` with {@link PARABANK_ACCOUNT_TYPE_CHECKING} (same as curl):
-   *
    * `curl -X POST "${baseUrl}/createAccount?customerId=<id>&newAccountType=0&fromAccountId=<id>"`
    */
   createCheckingAccount(params: { customerId: number; fromAccountId: number }): Promise<APIResponse> {
@@ -61,10 +132,6 @@ export class ParabankApiClient {
     });
   }
 
-  /**
-   * Same HTTP call as {@link createCheckingAccount}, but runs the system **`curl`** binary
-   * Shell equivalent: `curl -X POST` against `/createAccount?customerId=…&newAccountType=0&fromAccountId=…` on this instance’s bank base URL.
-   */
   createCheckingAccountWithCurl(params: { customerId: number; fromAccountId: number }): ParabankCurlResult {
     const base = this.baseUrl.replace(/\/$/, '');
     const qs = new URLSearchParams({
@@ -107,8 +174,6 @@ export class ParabankApiClient {
     return this.request.post(this.buildUrl('/withdraw', {}, query));
   }
 
-  // —— Database / JMS / misc ——
-
   /** POST `/cleanDB` */
   cleanDB(): Promise<APIResponse> {
     return this.request.post(this.buildUrl('/cleanDB'));
@@ -134,8 +199,6 @@ export class ParabankApiClient {
     return this.request.post(this.buildUrl('/setParameter/{name}/{value}', pathParams));
   }
 
-  // —— Loans ——
-
   /** POST `/requestLoan` */
   requestLoan(query: {
     customerId: number;
@@ -146,9 +209,6 @@ export class ParabankApiClient {
     return this.request.post(this.buildUrl('/requestLoan', {}, query));
   }
 
-  // —— Customers ——
-
-  /** POST `/customers/update/{customerId}` — all fields are required query parameters in the spec. */
   updateCustomer(
     pathParams: { customerId: number },
     query: {
@@ -167,9 +227,6 @@ export class ParabankApiClient {
     return this.request.post(this.buildUrl('/customers/update/{customerId}', pathParams, query));
   }
 
-  // —— Positions ——
-
-  /** POST `/customers/{customerId}/buyPosition` */
   buyPosition(
     pathParams: { customerId: number },
     query: {
@@ -183,7 +240,6 @@ export class ParabankApiClient {
     return this.request.post(this.buildUrl('/customers/{customerId}/buyPosition', pathParams, query));
   }
 
-  /** POST `/customers/{customerId}/sellPosition` */
   sellPosition(
     pathParams: { customerId: number },
     query: {
@@ -196,121 +252,15 @@ export class ParabankApiClient {
     return this.request.post(this.buildUrl('/customers/{customerId}/sellPosition', pathParams, query));
   }
 
-  // —— GET single resources ——
-
-  /** GET `/accounts/{accountId}` */
-  getAccount(pathParams: { accountId: number }): Promise<APIResponse> {
-    return this.request.get(this.buildUrl('/accounts/{accountId}', pathParams));
-  }
-
-  /** GET `/customers/{customerId}` */
-  getCustomer(pathParams: { customerId: number }): Promise<APIResponse> {
-    return this.request.get(this.buildUrl('/customers/{customerId}', pathParams));
-  }
-
-  /** GET `/customers/{customerId}/accounts` */
-  getCustomerAccounts(pathParams: { customerId: number }): Promise<APIResponse> {
-    return this.request.get(this.buildUrl('/customers/{customerId}/accounts', pathParams));
-  }
-
-  /** GET `/positions/{positionId}` */
-  getPosition(pathParams: { positionId: number }): Promise<APIResponse> {
-    return this.request.get(this.buildUrl('/positions/{positionId}', pathParams));
-  }
-
-  /** GET `/positions/{positionId}/{startDate}/{endDate}` */
-  getPositionHistory(pathParams: { positionId: number; startDate: string; endDate: string }): Promise<APIResponse> {
-    return this.request.get(this.buildUrl('/positions/{positionId}/{startDate}/{endDate}', pathParams));
-  }
-
-  /** GET `/customers/{customerId}/positions` */
-  getCustomerPositions(pathParams: { customerId: number }): Promise<APIResponse> {
-    return this.request.get(this.buildUrl('/customers/{customerId}/positions', pathParams));
-  }
-
-  /** GET `/transactions/{transactionId}` */
-  getTransaction(pathParams: { transactionId: number }): Promise<APIResponse> {
-    return this.request.get(this.buildUrl('/transactions/{transactionId}', pathParams));
-  }
-
-  // —— GET transactions by account ——
-
-  /** GET `/accounts/{accountId}/transactions` */
-  getAccountTransactions(pathParams: { accountId: number }): Promise<APIResponse> {
-    return this.request.get(this.buildUrl('/accounts/{accountId}/transactions', pathParams));
-  }
-
-  /** GET `/accounts/{accountId}/transactions/amount/{amount}` */
-  getAccountTransactionsByAmount(pathParams: { accountId: number; amount: number }): Promise<APIResponse> {
-    return this.request.get(this.buildUrl('/accounts/{accountId}/transactions/amount/{amount}', pathParams));
-  }
-
-  /** GET `/accounts/{accountId}/transactions/month/{month}/type/{type}` */
-  getAccountTransactionsByMonthAndType(pathParams: {
-    accountId: number;
-    month: string;
-    type: string;
-  }): Promise<APIResponse> {
-    return this.request.get(
-      this.buildUrl('/accounts/{accountId}/transactions/month/{month}/type/{type}', pathParams),
-    );
-  }
-
-  /** GET `/accounts/{accountId}/transactions/fromDate/{fromDate}/toDate/{toDate}` */
-  getAccountTransactionsByDateRange(pathParams: {
-    accountId: number;
-    fromDate: string;
-    toDate: string;
-  }): Promise<APIResponse> {
-    return this.request.get(
-      this.buildUrl('/accounts/{accountId}/transactions/fromDate/{fromDate}/toDate/{toDate}', pathParams),
-    );
-  }
-
-  /** GET `/accounts/{accountId}/transactions/onDate/{onDate}` */
-  getAccountTransactionsOnDate(pathParams: { accountId: number; onDate: string }): Promise<APIResponse> {
-    return this.request.get(this.buildUrl('/accounts/{accountId}/transactions/onDate/{onDate}', pathParams));
-  }
-
-  // —— Auth ——
-
-  /** GET `/login/{username}/{password}` — convenience: parsed customer id when body is customer XML. */
-  async login(username: string, password: string): Promise<ParabankLoginResult> {
-    const response = await this.loginRequest(username, password);
-    const body = await response.text();
-    return {
-      status: response.status(),
-      ok: response.ok(),
-      body,
-      customerId: ParabankApiClient.parseCustomerIdFromCustomerXml(body),
-    };
-  }
-
-  /** Raw login response (same contract as Swagger `login` operation). */
-  loginRequest(username: string, password: string): Promise<APIResponse> {
-    return this.request.get(
-      this.buildUrl('/login/{username}/{password}', { username, password }),
-    );
-  }
-
-  // —— Escape hatch ——
-
-  /**
-   * GET arbitrary path under {@link PARABANK_API_BASE_URL} (must start with `/`).
-   * For anything not wrapped above.
-   */
   get(path: string, options?: Parameters<APIRequestContext['get']>[1]): Promise<APIResponse> {
     const normalized = path.startsWith('/') ? path : `/${path}`;
     return this.request.get(`${this.baseUrl}${normalized}`, options);
   }
 
-  /** POST arbitrary path under the bank base URL. */
   post(path: string, options?: Parameters<APIRequestContext['post']>[1]): Promise<APIResponse> {
     const normalized = path.startsWith('/') ? path : `/${path}`;
     return this.request.post(`${this.baseUrl}${normalized}`, options);
   }
-
-  // —— Parsed helpers (XML list endpoints) ——
 
   async getCustomerAccountsParsed(customerId: number): Promise<{ status: number; accounts: ParabankAccount[] }> {
     const response = await this.getCustomerAccounts({ customerId });
@@ -318,9 +268,123 @@ export class ParabankApiClient {
     return { status: response.status(), accounts: ParabankApiClient.parseAccountBlocksFromXml(body) };
   }
 
-  // ---------------------------------------------------------------------------
-  // Private
-  // ---------------------------------------------------------------------------
+  async getAccountParsed(accountId: number): Promise<{ status: number; account: ParabankAccount | undefined }> {
+    const response = await this.getAccount({ accountId });
+    const body = await response.text();
+    const accounts = ParabankApiClient.parseAccountBlocksFromXml(body);
+    return { status: response.status(), account: accounts[0] };
+  }
+
+  static parseAccountBlocksFromXml(xml: string): ParabankAccount[] {
+    const accounts: ParabankAccount[] = [];
+    const blockPattern = /<account>([\s\S]*?)<\/account>/g;
+    let block: RegExpExecArray | null;
+    while ((block = blockPattern.exec(xml)) !== null) {
+      const inner = block[1] ?? '';
+      accounts.push({
+        id: ParabankApiClient.textTag(inner, 'id'),
+        customerId: ParabankApiClient.textTag(inner, 'customerId'),
+        type: ParabankApiClient.textTag(inner, 'type'),
+        balance: ParabankApiClient.textTag(inner, 'balance'),
+      });
+    }
+    return accounts;
+  }
+
+  // —— Assertions ——
+
+  async assertLoginResponse(response: APIResponse, firstName: string, lastName: string): Promise<void> {
+    const body = await ApiAssertions.assertApiResponse(
+      response,
+      expectedParabankLoginResponse(firstName, lastName),
+    );
+    const idMatch = /<customer>[\s\S]*?<id>(\d+)<\/id>/.exec(body);
+    expect(idMatch?.[1], 'login XML should contain numeric customer id').toMatch(/^\d+$/);
+  }
+
+  async assertGetCustomerResponse(
+    response: APIResponse,
+    customerId: string | number,
+    firstName: string,
+  ): Promise<void> {
+    await ApiAssertions.assertApiResponse(
+      response,
+      expectedParabankGetCustomerResponse(customerId, firstName),
+    );
+  }
+
+  async assertListedPrimaryAccountMatchesGetAccount(
+    customerId: string | number,
+    primaryAccountId: string,
+  ): Promise<void> {
+    const { status: listStatus, accounts } = await this.getCustomerAccountsParsed(Number(customerId));
+    expect(listStatus, 'GET /customers/{id}/accounts status').toBe(200);
+    expect(accounts.length, 'user should have at least one account').toBeGreaterThan(0);
+    const listed = accounts.find((a) => a.id === primaryAccountId);
+    expect(listed, 'provisioned primary account should appear in list').toBeDefined();
+    expect(listed?.customerId).toBe(String(customerId));
+    const response = await this.getAccount({ accountId: Number(primaryAccountId) });
+    await ApiAssertions.assertApiResponse(
+      response,
+      expectedParabankGetAccountResponse(primaryAccountId, customerId),
+    );
+  }
+
+  assertCreateCheckingCurlResult(
+    curl: ParabankCurlResult,
+    customerId: string | number,
+    options?: { newAccountMustDifferFrom?: string },
+  ): string {
+    ApiAssertions.assertApiResponseText(
+      curl.statusCode,
+      curl.body,
+      expectedParabankCreateCheckingAccountResponse(customerId),
+    );
+    const created = ParabankApiClient.parseAccountBlocksFromXml(curl.body);
+    expect(created.length, 'createAccount should return one account block').toBe(1);
+    const row = created[0];
+    expect(row, 'parsed account').toBeDefined();
+    expect(row?.id, 'new account id').toMatch(/^\d+$/);
+    if (options?.newAccountMustDifferFrom !== undefined) {
+      expect(row?.id).not.toBe(options.newAccountMustDifferFrom);
+    }
+    return row!.id;
+  }
+
+  async assertGetAccountResponseForOwner(accountId: string, customerId: string | number): Promise<void> {
+    const response = await this.getAccount({ accountId: Number(accountId) });
+    await ApiAssertions.assertApiResponse(
+      response,
+      expectedParabankGetAccountResponse(accountId, customerId),
+    );
+  }
+
+  assertAccountParsedBalance(
+    parsed: { status: number; account?: ParabankAccount },
+    label: string,
+  ): number {
+    expect(parsed.status, `${label}: GET /accounts status`).toBe(200);
+    const bal = Number.parseFloat(parsed.account?.balance ?? '');
+    expect(Number.isNaN(bal), `${label}: balance is numeric`).toBe(false);
+    return bal;
+  }
+
+  assertTransferResponseOk(response: APIResponse): void {
+    expect(response.status(), 'POST /transfer').toBe(200);
+  }
+
+  assertBalancesDeltaAfterTransfer(
+    fromBefore: number,
+    toBefore: number,
+    fromAfter: number,
+    toAfter: number,
+    amount: number,
+  ): void {
+    expect(fromAfter).toBe(fromBefore - amount);
+    expect(toAfter).toBe(toBefore + amount);
+  }
+
+  // —— Private ——
 
   private buildUrl(
     template: string,
@@ -363,25 +427,6 @@ export class ParabankApiClient {
     return match?.[1];
   }
 
-  /**
-   * Parse every `<account>…</account>` block (e.g. `GET …/accounts` list or `POST /createAccount` body).
-   */
-  static parseAccountBlocksFromXml(xml: string): ParabankAccount[] {
-    const accounts: ParabankAccount[] = [];
-    const blockPattern = /<account>([\s\S]*?)<\/account>/g;
-    let block: RegExpExecArray | null;
-    while ((block = blockPattern.exec(xml)) !== null) {
-      const inner = block[1] ?? '';
-      accounts.push({
-        id: ParabankApiClient.textTag(inner, 'id'),
-        customerId: ParabankApiClient.textTag(inner, 'customerId'),
-        type: ParabankApiClient.textTag(inner, 'type'),
-        balance: ParabankApiClient.textTag(inner, 'balance'),
-      });
-    }
-    return accounts;
-  }
-
   private static textTag(fragment: string, tag: string): string {
     const match = new RegExp(`<${tag}>([^<]*)<\\/${tag}>`).exec(fragment);
     return match?.[1] ?? '';
@@ -389,7 +434,7 @@ export class ParabankApiClient {
 }
 
 // ---------------------------------------------------------------------------
-// Types 
+// Types
 // ---------------------------------------------------------------------------
 
 /** From `components.schemas.Address` (OpenAPI 3.0). */

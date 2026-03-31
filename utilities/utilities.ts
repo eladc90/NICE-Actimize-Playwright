@@ -10,14 +10,16 @@ export {
   expectedParabankCreateCheckingAccountResponse,
 } from './parabank_api_expectations';
 export { provisionParabankApiUser, type ParabankProvisionedApiUser } from './parabank_test_user';
+export {
+  parabankApiLoginCustomerId,
+  parabankApiNewCheckingAccountIdFromCurl,
+  parabankApiPrimaryAccountId,
+  parabankUiSessionAfterRegister,
+} from './parabank_new_checking_ui_helpers';
 
 export class Utilities {
-  /** One-off registration payload (unique username / SSN / phone pattern) for shared ParaBank environments. */
   static createUniqRegistrationData(): ParabankRegistrationData {
     const password = `Pw!${Utilities.randomAlphanumeric(14)}`;
-    /**
-     * Keep short — the demo DB column appears to truncate long values, which can look like “username already exists”.
-     */
     const username = `t${Date.now()}${Utilities.randomAlphanumeric(4)}`;
 
     const registrationData: ParabankRegistrationData = {

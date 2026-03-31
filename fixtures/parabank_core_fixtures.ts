@@ -1,51 +1,60 @@
-import { test as base, expect } from '@playwright/test';
+import { test as base } from '@playwright/test';
 import type { ParabankRegistrationData } from '../pages_ui/register_page';
 import { RegisterPage } from '../pages_ui/register_page';
 import { HomePage } from '../pages_ui/home_page';
 import { OverviewPage } from '../pages_ui/overview_page';
+import { TransferFundsPage } from '../pages_ui/transfer_funds_page';
 import { ParabankApiClient } from '../api_request/parabank_api_client';
 import {
-  ApiAssertions,
-  expectedParabankCreateCheckingAccountResponse,
+  parabankApiLoginCustomerId,
+  parabankApiNewCheckingAccountIdFromCurl,
+  parabankApiPrimaryAccountId,
+  parabankUiSessionAfterRegister,
+  provisionParabankApiUser,
+  type ParabankProvisionedApiUser,
   Utilities,
 } from '../utilities/utilities';
 
-/**
- * Context after {@link ParabankCoreFixtures.parabankNewCheckingAccountUi}: UI signup, CHECKING created via curl, browser on **Account Activity** for the new account.
- */
 export type ParabankNewCheckingAccountUi = {
   registration: ParabankRegistrationData;
   customerId: string;
-  /** Account used as `fromAccountId` when calling `createCheckingAccountWithCurl`. */
   primaryAccountId: string;
-  /** New CHECKING account id returned from the curl `POST /createAccount` call. */
   newAccountId: string;
 };
 
 export type ParabankCoreFixtures = {
-  /** Fresh unique signup payload for this test (from {@link Utilities.createUniqRegistrationData}). */
   registrationData: ParabankRegistrationData;
+  uiRegisteredCustomer: ParabankRegistrationData;
   registerPage: RegisterPage;
   homePage: HomePage;
-  /** Accounts overview (`overview.htm`) — use after login; {@link OverviewPage.goToAccountsOverviewViaNav} matches user navigation. */
   overviewPage: OverviewPage;
-  /** REST client for `…/parabank/services/bank` (see Swagger UI in repo docs). */
+  transferFundsPage: TransferFundsPage;
   parabankApi: ParabankApiClient;
-  /**
-   * Registers via UI, ensures **Account Services**, creates a new CHECKING account via {@link ParabankApiClient.createCheckingAccountWithCurl},
-   * then opens {@link OverviewPage.openAccountActivity} so the active page is **Account Activity** (`activity.htm`) for `newAccountId`.
-   */
   parabankNewCheckingAccountUi: ParabankNewCheckingAccountUi;
 };
 
-/** Core ParaBank fixtures (UI + REST client) without provisioned API user. */
-export const test = base.extend<ParabankCoreFixtures>({
+/** All fixtures available from {@link test} (core + `parabankApiUser`). */
+export type ParabankFixtures = ParabankCoreFixtures & {
+  /**
+   * Registers via the **Register** UI (`register.htm`), then logs in via REST and ensures at least one bank account exists.
+   * For API tests that must not rely on a shared hard-coded demo user.
+   */
+  parabankApiUser: ParabankProvisionedApiUser;
+};
+
+const testCore = base.extend<ParabankCoreFixtures>({
   registrationData: async ({}, use) => {
     await use(Utilities.createUniqRegistrationData());
   },
 
   registerPage: async ({ page }, use) => {
     await use(new RegisterPage(page));
+  },
+
+  uiRegisteredCustomer: async ({ registerPage }, use) => {
+    const registration = Utilities.createUniqRegistrationData();
+    await registerPage.registerNewCustomer(registration);
+    await use(registration);
   },
 
   homePage: async ({ page }, use) => {
@@ -56,64 +65,40 @@ export const test = base.extend<ParabankCoreFixtures>({
     await use(new OverviewPage(page));
   },
 
+  transferFundsPage: async ({ page }, use) => {
+    await use(new TransferFundsPage(page));
+  },
+
   parabankApi: async ({ request }, use) => {
     await use(new ParabankApiClient(request));
   },
 
   parabankNewCheckingAccountUi: async (
-    { page, registerPage, homePage, overviewPage, parabankApi },
+    { registerPage, homePage, overviewPage, parabankApi },
     use,
   ) => {
     const registration = Utilities.createUniqRegistrationData();
     await registerPage.registerNewCustomer(registration);
+    await parabankUiSessionAfterRegister(homePage, registration);
 
-    await homePage.openHome();
-    try {
-      await homePage.usernameInput().waitFor({ state: 'visible', timeout: 8_000 });
-      await homePage.login(registration.username, registration.password);
-    } catch {
-      /* ParaBank may already log the customer in after signup */
-    }
-
-    await expect(page.getByRole('heading', { name: 'Account Services' })).toBeVisible({
-      timeout: 15_000,
-    });
-
-    const login = await parabankApi.login(registration.username, registration.password);
-    if (login.customerId === undefined) {
-      throw new Error('REST login did not return customer id');
-    }
-    const customerId = login.customerId;
-    const cid = Number(customerId);
-
-    const { status: listStatus, accounts } = await parabankApi.getCustomerAccountsParsed(cid);
-    if (listStatus !== 200) {
-      throw new Error(`GET customer accounts failed: HTTP ${listStatus}`);
-    }
-    if (accounts.length === 0) {
-      throw new Error('No existing account to use as fromAccountId');
-    }
-    const primaryAccountId = accounts[0]!.id;
-
-    const { statusCode, body } = parabankApi.createCheckingAccountWithCurl({
-      customerId: cid,
-      fromAccountId: Number(primaryAccountId),
-    });
-    ApiAssertions.assertApiResponseText(
-      statusCode,
-      body,
-      expectedParabankCreateCheckingAccountResponse(customerId),
+    const customerId = await parabankApiLoginCustomerId(
+      parabankApi,
+      registration.username,
+      registration.password,
     );
-
-    const parsed = ParabankApiClient.parseAccountBlocksFromXml(body);
-    if (parsed.length !== 1 || !parsed[0]?.id) {
-      throw new Error('Unexpected POST /createAccount response shape');
-    }
-    const newAccountId = parsed[0].id;
+    const primaryAccountId = await parabankApiPrimaryAccountId(parabankApi, customerId);
+    const newAccountId = parabankApiNewCheckingAccountIdFromCurl(parabankApi, customerId, primaryAccountId);
 
     await overviewPage.openAccountActivity(newAccountId);
-
     await use({ registration, customerId, primaryAccountId, newAccountId });
+  },
+});
+
+export const test = testCore.extend<Pick<ParabankFixtures, 'parabankApiUser'>>({
+  parabankApiUser: async ({ parabankApi, registerPage }, use) => {
+    const registration = Utilities.createUniqRegistrationData();
+    const user = await provisionParabankApiUser(parabankApi, registerPage, registration);
+    await use(user);
   },
 });
 

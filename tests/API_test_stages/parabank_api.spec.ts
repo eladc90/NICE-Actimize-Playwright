@@ -1,12 +1,4 @@
-import { ParabankApiClient } from '../../api_request/parabank_api_client';
-import { expect, test } from '../../fixtures/parabank_fixtures';
-import {
-  ApiAssertions,
-  expectedParabankCreateCheckingAccountResponse,
-  expectedParabankGetAccountResponse,
-  expectedParabankGetCustomerResponse,
-  expectedParabankLoginResponse,
-} from '../../utilities/utilities';
+import { test } from '../../fixtures/parabank_fixtures';
 
 /**
  * Serial: each test provisions a fresh user via `register.htm`. Running these in parallel against
@@ -15,18 +7,9 @@ import {
 test.describe.serial('ParaBank API', () => {
   test.describe('customer ID', () => {
     test('login response — status, XML shape, and customer id field', async ({ parabankApi, parabankApiUser }) => {
-      const { username, password } = parabankApiUser.registration;
-      const { firstName, lastName } = parabankApiUser.registration;
-
-      const response = await parabankApi.loginRequest(username, password);
-
-      const body = await ApiAssertions.assertApiResponse(
-        response,
-        expectedParabankLoginResponse(firstName, lastName),
-      );
-
-      const idMatch = /<customer>[\s\S]*?<id>(\d+)<\/id>/.exec(body);
-      expect(idMatch?.[1]).toMatch(/^\d+$/);
+      const { registration } = parabankApiUser;
+      const response = await parabankApi.loginRequest(registration.username, registration.password);
+      await parabankApi.assertLoginResponse(response, registration.firstName, registration.lastName);
     });
 
     test('getCustomer — status, XML structure, and id matches provisioned user', async ({
@@ -34,13 +17,8 @@ test.describe.serial('ParaBank API', () => {
       parabankApiUser,
     }) => {
       const { customerId, registration } = parabankApiUser;
-
       const response = await parabankApi.getCustomer({ customerId: Number(customerId) });
-
-      await ApiAssertions.assertApiResponse(
-        response,
-        expectedParabankGetCustomerResponse(customerId, registration.firstName),
-      );
+      await parabankApi.assertGetCustomerResponse(response, customerId, registration.firstName);
     });
   });
 
@@ -50,21 +28,7 @@ test.describe.serial('ParaBank API', () => {
       parabankApiUser,
     }) => {
       const { customerId, primaryAccountId } = parabankApiUser;
-
-      const { status: listStatus, accounts } = await parabankApi.getCustomerAccountsParsed(Number(customerId));
-      expect(listStatus, 'GET /customers/{id}/accounts status').toBe(200);
-      expect(accounts.length, 'user should have at least one account').toBeGreaterThan(0);
-
-      const listed = accounts.find((a) => a.id === primaryAccountId);
-      expect(listed, 'provisioned primary account should appear in list').toBeDefined();
-
-      const response = await parabankApi.getAccount({ accountId: Number(primaryAccountId) });
-
-      await ApiAssertions.assertApiResponse(
-        response,
-        expectedParabankGetAccountResponse(primaryAccountId, customerId),
-      );
-      expect(listed?.customerId).toBe(customerId);
+      await parabankApi.assertListedPrimaryAccountMatchesGetAccount(customerId, primaryAccountId);
     });
   });
 
@@ -72,30 +36,50 @@ test.describe.serial('ParaBank API', () => {
     test('create CHECKING account via curl — GET /accounts/{id} confirms', async ({ parabankApi, parabankApiUser }) => {
       const { customerId, primaryAccountId } = parabankApiUser;
 
-      const { statusCode, body } = parabankApi.createCheckingAccountWithCurl({
+      const curl = parabankApi.createCheckingAccountWithCurl({
         customerId: Number(customerId),
         fromAccountId: Number(primaryAccountId),
       });
+      const newAccountId = parabankApi.assertCreateCheckingCurlResult(curl, customerId, {
+        newAccountMustDifferFrom: primaryAccountId,
+      });
+      await parabankApi.assertGetAccountResponseForOwner(newAccountId, customerId);
+    });
+  });
 
-      ApiAssertions.assertApiResponseText(
-        statusCode,
-        body,
-        expectedParabankCreateCheckingAccountResponse(customerId),
+  test.describe('transfer', () => {
+    test('POST /transfer — GET /accounts on both ids reflects balance delta', async ({
+      parabankApi,
+      parabankApiUser,
+    }) => {
+      const { customerId, primaryAccountId } = parabankApiUser;
+      const cid = Number(customerId);
+      const fromId = Number(primaryAccountId);
+
+      const curl = parabankApi.createCheckingAccountWithCurl({
+        customerId: cid,
+        fromAccountId: fromId,
+      });
+      const toId = Number(parabankApi.assertCreateCheckingCurlResult(curl, customerId));
+
+      const balFromBefore = parabankApi.assertAccountParsedBalance(
+        await parabankApi.getAccountParsed(fromId),
+        'from',
       );
+      const balToBefore = parabankApi.assertAccountParsedBalance(await parabankApi.getAccountParsed(toId), 'to');
 
-      const created = ParabankApiClient.parseAccountBlocksFromXml(body);
-      expect(created.length).toBe(1);
-      const row = created[0];
-      expect(row).toBeDefined();
-      expect(row?.id).toMatch(/^\d+$/);
-      expect(row?.id).not.toBe(primaryAccountId);
-      const newAccountId = row!.id;
+      const amount = 25;
+      const transferResp = await parabankApi.transfer({
+        fromAccountId: fromId,
+        toAccountId: toId,
+        amount,
+      });
+      parabankApi.assertTransferResponseOk(transferResp);
 
-      const getResp = await parabankApi.getAccount({ accountId: Number(newAccountId) });
-      await ApiAssertions.assertApiResponse(
-        getResp,
-        expectedParabankGetAccountResponse(newAccountId, customerId),
-      );
+      const balFromAfter = parabankApi.assertAccountParsedBalance(await parabankApi.getAccountParsed(fromId), 'from');
+      const balToAfter = parabankApi.assertAccountParsedBalance(await parabankApi.getAccountParsed(toId), 'to');
+
+      parabankApi.assertBalancesDeltaAfterTransfer(balFromBefore, balToBefore, balFromAfter, balToAfter, amount);
     });
   });
 });

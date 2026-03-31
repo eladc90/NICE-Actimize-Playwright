@@ -1,4 +1,4 @@
-import type { Locator, Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 import { BasePage } from './base_page';
 
 /** Values for each field in `#customerForm` on `register.htm`. */
@@ -18,32 +18,29 @@ export type ParabankRegistrationData = {
 };
 
 /**
- * ParaBank signup form (`register.htm`). Locators use the `customerForm` markup from
- * https://parabank.parasoft.com/parabank/register.htm (verified via live HTML).
+ * ParaBank signup (`register.htm`).
+ *
+ * @see https://parabank.parasoft.com/parabank/register.htm
  */
 export class RegisterPage extends BasePage {
   constructor(page: Page) {
     super(page);
   }
 
+  // —— Main actions ——
+
   async openRegister(): Promise<void> {
     await this.open('register.htm');
   }
 
-  /**
-   * Full UI signup: open `register.htm`, submit the form, wait for the success banner.
-   * Same path as manual registration in the ParaBank web app.
-   */
+  /** Opens signup, fills `#customerForm`, submits, and waits for the success banner. */
   async registerNewCustomer(data: ParabankRegistrationData): Promise<void> {
     await this.openRegister();
     await this.fillAndRegister(data);
-    await this.page.getByText('Your account was created successfully.').waitFor({
-      state: 'visible',
-      timeout: 30_000,
-    });
+    await this.assertSignupSuccess();
   }
 
-  /** Fills every signup field and clicks Register. */
+  /** Fills all signup fields and clicks **Register**. */
   async fillAndRegister(data: ParabankRegistrationData): Promise<void> {
     await this.firstNameInput().fill(data.firstName);
     await this.lastNameInput().fill(data.lastName);
@@ -59,9 +56,7 @@ export class RegisterPage extends BasePage {
     await this.registerSubmit().click();
   }
 
-  private formRoot(): Locator {
-    return this.page.locator('#customerForm');
-  }
+  // —— Locators ——
 
   firstNameInput(): Locator {
     return this.formRoot().locator('input[name="customer.firstName"]');
@@ -109,5 +104,25 @@ export class RegisterPage extends BasePage {
 
   registerSubmit(): Locator {
     return this.formRoot().getByRole('button', { name: 'Register' });
+  }
+
+  // —— Assertions ——
+
+  async assertSignupSuccess(timeout = 40_000): Promise<void> {
+    await expect(this.page.getByText('Your account was created successfully.')).toBeVisible({
+      timeout,
+    });
+  }
+
+  async assertHeadingHasUser(username: string, timeout = 15_000): Promise<void> {
+    await expect(this.page.getByRole('heading', { name: new RegExp(username, 'i') })).toBeVisible({
+      timeout,
+    });
+  }
+
+  // —— Private ——
+
+  private formRoot(): Locator {
+    return this.page.locator('#customerForm');
   }
 }

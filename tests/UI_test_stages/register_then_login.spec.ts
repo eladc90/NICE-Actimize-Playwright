@@ -1,38 +1,23 @@
-import { test, expect } from '../../fixtures/parabank_fixtures';
-import type { ParabankRegistrationData } from '../../pages_ui/register_page';
+import { test } from '../../fixtures/parabank_fixtures';
 
-function regExpEscape(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/**
- * Same browser user: register once, then log in on the main page using those credentials.
- * `test.describe.serial` + a shared `let` is how you pass data between tests (fixtures alone give a new `registrationData` per test).
- */
-test.describe.serial('Register then login with the same user', () => {
-  let registeredUser!: ParabankRegistrationData;
-
-  test('register new account', async ({ registrationData, registerPage }) => {
-    await registerPage.registerNewCustomer(registrationData);
-    registeredUser = registrationData;
-  });
-
-  test('login from home with saved credentials', async ({ page, homePage, overviewPage }) => {
+test.describe('Register then login with the same user', () => {
+  test('after UI signup, login from home reaches Account Services and overview', async ({
+    homePage,
+    overviewPage,
+    uiRegisteredCustomer,
+  }) => {
     await homePage.openHome();
-    await homePage.login(registeredUser.username, registeredUser.password);
-
-    const welcomeName = new RegExp(
-      `Welcome\\s+${regExpEscape(registeredUser.firstName)}\\s+${regExpEscape(registeredUser.lastName)}`,
-      'i',
+    /** After UI signup, the demo may already be logged in on `index.htm` (no username field — raw `login()` would time out). */
+    await homePage.assertHomeOrLogin();
+    await homePage.loginThroughFormIfShown(
+      uiRegisteredCustomer.username,
+      uiRegisteredCustomer.password,
     );
-    await expect(page.getByText(welcomeName)).toBeVisible({ timeout: 15_000 });
+    await homePage.assertAccountServices();
 
-    await expect(page.getByRole('heading', { name: 'Account Services' })).toBeVisible({
-      timeout: 15_000,
-    });
+    await homePage.assertWelcomeCustomer(uiRegisteredCustomer.firstName, uiRegisteredCustomer.lastName);
 
     await overviewPage.goToAccountsOverviewViaNav();
-    await expect(page).toHaveURL(/overview\.htm/i);
-    await expect(overviewPage.accountsTable()).toBeVisible({ timeout: 15_000 });
+    await overviewPage.assertOnOverview();
   });
 });
