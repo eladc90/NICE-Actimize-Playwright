@@ -23,34 +23,6 @@ test.describe('ParaBank full journey (E2E)', () => {
     await registerPage.registerNewCustomer(registration);
   });
 
-  /**
-   * **2.1** Unknown username on REST login (API cannot be emulated reliably on this demo’s web login for rejects).
-   */
-  test('2.1 Login with unknown user (API) — no customer id', async ({ parabankApi }) => {
-    const unknownUser: string = `no_such_customer_${Date.now()}`;
-    const result = await parabankApi.login(unknownUser, 'SomeBadPass!9');
-    expect(result.customerId).toBeUndefined();
-    if (result.ok) {
-      expect(result.body.length).toBeGreaterThan(0);
-      expect(result.body.toLowerCase()).toMatch(/error|invalid|fail|denied|not.*verified|exception|unknown/);
-    } else {
-      expect(result.status).toBeGreaterThanOrEqual(400);
-    }
-  });
-
-  /**
-   * **2.2** Empty password on web login — stay on login surface (complements 2.1 API negative).
-   */
-  test('2.2 Login with empty password (UI) — validation / rejected', async ({ homePage }) => {
-    await homePage.openHome();
-    await homePage.assertHomeOrLogin();
-    await expect(homePage.usernameInput()).toBeVisible();
-    await homePage.usernameInput().fill(registration.username);
-    await homePage.passwordInput().fill('');
-    await homePage.loginButton().click();
-    await homePage.assertEmptyPasswordRejectedByFormValidation();
-  });
-
   test('2. Login ', async ({ homePage }) => {
     await homePage.openHome();
     await homePage.assertHomeOrLogin();
@@ -64,16 +36,6 @@ test.describe('ParaBank full journey (E2E)', () => {
       throw new Error('REST login did not return customer id');
     }
     customerId = login.customerId;
-  });
-
-  /**
-   * **4.1** `GET /accounts/{accountId}` with an id that does not exist (or is implausibly large for this demo).
-   */
-  test('4.1 GET account — unknown account id (API)', async ({ parabankApi }) => {
-    const nonExistentAccountId = 9_999_999_999;
-    const response = await parabankApi.getAccount({ accountId: nonExistentAccountId });
-    expect(response.ok(), 'GET /accounts/{id} must fail for a non-existent account').toBe(false);
-    expect(response.status()).toBeGreaterThanOrEqual(400);
   });
 
   test('4. Get existing account via api', async ({ parabankApi }) => {

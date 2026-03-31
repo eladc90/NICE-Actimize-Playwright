@@ -37,6 +37,31 @@ npm run typecheck
 
 Run commands from the **repository root**.
 
+### Negative tests
+
+ParaBank error-path cases live in `tests/negative_tests/` (unknown user API, empty-password UI, unknown account id API). They use the same browser projects as `tests/e2e` (Chromium, Firefox, WebKit — not `chromium-api`).
+
+Default run (all configured browser projects):
+
+```bash
+npx playwright test tests/negative_tests
+```
+
+Other useful invocations:
+
+```bash
+npx playwright test tests/negative_tests --headed
+npx playwright test tests/negative_tests --ui
+npx playwright test tests/negative_tests --project=chromium
+npx playwright test tests/negative_tests --workers=1
+```
+
+Run E2E and negatives in one go:
+
+```bash
+npx playwright test tests/e2e tests/negative_tests
+```
+
 ### E2E journey
 
 Serial ParaBank flow in `tests/e2e` (register → login → API → curl → UI → transfer → balances → logout):
@@ -49,12 +74,15 @@ By default this follows `playwright.config.ts` **browser projects** (e.g. Chromi
 
 ### Optional flags
 
+The same flags work for **`tests/e2e`** and **`tests/negative_tests`**; only the path changes. Examples below use E2E — substitute `tests/negative_tests` when you want negatives only.
+
 | Goal | Example |
 |------|---------|
 | Headed browser | `npx playwright test tests/e2e --headed` |
 | Playwright UI mode | `npx playwright test tests/e2e --ui` |
 | Chromium only (often stabler on the shared demo) | `npx playwright test tests/e2e --project=chromium` |
 | Fewer workers | `npx playwright test tests/e2e --workers=1` |
+| E2E + negative tests together | `npx playwright test tests/e2e tests/negative_tests` |
 | Open HTML report after a run | `npx playwright show-report` |
 
 With **`CI=true`**, Playwright applies stricter `forbidOnly`, **retries**, and **workers** as defined in `playwright.config.ts`.
@@ -68,6 +96,7 @@ With **`CI=true`**, Playwright applies stricter `forbidOnly`, **retries**, and *
 | `tests/UI_test_stages/` | UI tests (page-object driven) |
 | `tests/API_test_stages/` | API tests (Chromium project; may open browser for registration) |
 | `tests/e2e/` | Long serial customer journey (UI + API + curl) |
+| `tests/negative_tests/` | ParaBank negative / error-path cases (API + UI), separate from the happy-path E2E |
 | `pages_ui/` | Page objects: actions, locators, `assert*` helpers |
 | `api_request/` | `ParabankApiClient` (paths aligned with ParaBank OpenAPI) |
 | `fixtures/` | Extended `test` + shared fixtures (`parabank_fixtures` → `parabank_core_fixtures`) |
